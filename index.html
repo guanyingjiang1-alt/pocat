@@ -302,7 +302,7 @@
 (function(){
   "use strict";
 
-  var STORAGE_KEY = "pocat:gamedata";
+  var API_URL = "/api/score";
   var faceBtn = document.getElementById('faceBtn');
   var totalNum = document.getElementById('totalNum');
   var leaderboardEl = document.getElementById('leaderboard');
@@ -317,7 +317,6 @@
   var remoteTotal = 0;           // last known shared total
   var remoteLeaderboard = {};    // last known shared leaderboard {name: count}
   var nickname = "";
-  var storageOK = !!(window.storage && typeof window.storage.get === 'function');
   var flushTimer = null;
   var pollTimer = null;
 
@@ -419,41 +418,32 @@
   }
 
   function loadShared(){
-    if(!storageOK){ renderTotal(); renderLeaderboard(); return; }
-    window.storage.get(STORAGE_KEY, true).then(function(res){
-      if(res && res.value){
-        try{
-          var data = JSON.parse(res.value);
-          remoteTotal = data.totalClicks || 0;
-          remoteLeaderboard = data.leaderboard || {};
-        }catch(e){}
-      }
+    fetch(API_URL).then(function(r){ return r.json(); }).then(function(data){
+      remoteTotal = data.totalClicks || 0;
+      remoteLeaderboard = data.leaderboard || {};
       renderTotal(); renderLeaderboard();
     }).catch(function(){
-      remoteTotal = remoteTotal || 0;
+      // API not reachable yet (e.g. database not wired up) — keep showing local count only
       renderTotal(); renderLeaderboard();
     });
   }
 
   function flush(){
-    if(!storageOK || pendingLocal <= 0) return;
+    if(pendingLocal <= 0) return;
     var toFlush = pendingLocal;
     var name = currentName();
     pendingLocal = 0;
-    window.storage.get(STORAGE_KEY, true).then(function(res){
-      var data = { totalClicks:0, leaderboard:{} };
-      if(res && res.value){
-        try{ data = JSON.parse(res.value); }catch(e){}
-        if(!data.leaderboard) data.leaderboard = {};
-        if(!data.totalClicks) data.totalClicks = 0;
-      }
-      data.totalClicks = (data.totalClicks||0) + toFlush;
-      data.leaderboard[name] = (data.leaderboard[name]||0) + toFlush;
-      return window.storage.set(STORAGE_KEY, JSON.stringify(data), true).then(function(){
-        remoteTotal = data.totalClicks;
-        remoteLeaderboard = data.leaderboard;
-        renderTotal(); renderLeaderboard();
-      });
+    fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, count: toFlush })
+    }).then(function(r){
+      if(!r.ok) throw new Error('bad response');
+      return r.json();
+    }).then(function(data){
+      remoteTotal = data.totalClicks || 0;
+      remoteLeaderboard = data.leaderboard || {};
+      renderTotal(); renderLeaderboard();
     }).catch(function(){
       // write failed; put the clicks back so we retry later
       pendingLocal += toFlush;
